@@ -21,7 +21,7 @@ vm_meta_snap_t * cfg_file_open (const gchar * filename)
 {
     vm_meta_snap_t * vm = NULL;
     GKeyFile * fd = NULL;
-    GError * error;
+    GError * error = NULL;
 
     gdouble dbl_value = 0.0;
     gint int_value = 0;
@@ -57,14 +57,14 @@ vm_meta_snap_t * cfg_file_open (const gchar * filename)
 									  "Global",
 									  "Version",
 									  &error);
-    g_printf ("Version read = %2.2f\n", dbl_value);
+//    g_printf ("Version read = %2.2f\n", dbl_value);
 
     int_value = g_key_file_get_integer(fd,
 									  "Global",
 									  "NbVdi",
 									  &error);
     nb_vdi = int_value;
-    g_printf ("Nb VDI = %d\n", nb_vdi);
+//    g_printf ("Nb VDI = %d\n", nb_vdi);
 
     for (i = 0; i < nb_vdi; i++)
     {
@@ -73,34 +73,50 @@ vm_meta_snap_t * cfg_file_open (const gchar * filename)
 
     	//g_sprintf(vdi_key, 15, "[%06d]", i);
     	vdi_key = g_strdup_printf("F%d", i);
-    	g_printf ("looking in '%s'\n", vdi_key);
+//    	g_printf ("looking in '%s'\n", vdi_key);
 
     	cur = g_new0 (vdi_file_t, 1);
     	cur->filename = g_key_file_get_string (fd,
     										   vdi_key,
 											   "VdiFile",
 											   &error);
+    	if (error) {
+    		g_debug ("%s", error->message);
+    		g_error_free (error); error = NULL;
+    	}
 //    	if (error != NULL) {
 //    		g_debug ("VdiFile catch error : %s\n", error->message);
 //    	}
-    	g_printf ("%s\n", cur->filename);
+//    	g_printf ("%s\n", cur->filename);
     	cur->filesize = g_key_file_get_integer(fd,
     										   vdi_key,
 											   "VdiSize",
 											   &error);
-    	g_printf ("%d\n", cur->filesize);
+    	if (error) {
+    		g_debug ("%s", error->message);
+    		g_error_free (error); error = NULL;
+    	}
+//    	g_printf ("%d\n", cur->filesize);
     	cur->filemtime = g_key_file_get_integer(fd,
     										   vdi_key,
 											   "VdiMTim",
 											   &error);
-    	g_printf ("%d\n", cur->filemtime);
+    	if (error) {
+    		g_debug ("%s", error->message);
+    		g_error_free (error); error = NULL;
+    	}
+//    	g_printf ("%d\n", cur->filemtime);
 
         int_value = g_key_file_get_integer(fd,
 										  vdi_key,
     									  "NbCrc",
     									  &error);
         nb_crc = int_value;
-        g_printf ("Nb CRC = %d\n", nb_crc);
+    	if (error) {
+    		g_debug ("%s", error->message);
+    		g_error_free (error); error = NULL;
+    	}
+//        g_printf ("Nb CRC = %d\n", nb_crc);
 
         for (j = 0; j < nb_crc; j++)
         {
@@ -113,8 +129,12 @@ vm_meta_snap_t * cfg_file_open (const gchar * filename)
 											   vdi_key,
 											   crc_key,
 											   &error);
+        	if (error) {
+        		g_debug ("%s", error->message);
+        		g_error_free (error); error = NULL;
+        	}
 
-        	g_printf ("%s\n", crc_str);
+//        	g_printf ("%s\n", crc_str);
         	cur->filecrclist = g_slist_append (cur->filecrclist, crc_str);
 //        	g_free (crc_str);
 

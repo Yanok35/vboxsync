@@ -9,7 +9,7 @@
 
 #include "cfgfile.h"
 
-#define VBOX_IMG_DIR "/home/yannick/VirtualBox VMs/WinXP"
+#define VBOX_IMG_DIR "/home/yannick/VirtualBox VMs/Win7"
 
 /* Big file chunk size is 640 KB */
 #define CHUNK_SIZE (655360)
@@ -119,6 +119,53 @@ GSList * file_scan_for_crc_list (vdi_file_t * vdi, gulong chunksize)
     return crclist;
 }
 
+/* Copy CRC List from ref VM if mtime is identical.
+ * Return NULL if ref mtime does not match, or VDI not found. */
+GSList * file_get_crclist_from_ref (vdi_file_t * vdi, vm_meta_snap_t * vmref)
+{
+	GDateTime *  mtime = NULL; // DBG only
+	GSList * lptr = NULL;
+	vdi_file_t * vdi_i = NULL;
+
+	/* Search corresponding VDI in ref VM */
+	for (lptr = vmref->vdifiles;
+		 lptr != NULL;
+		 lptr = g_slist_next (lptr)) {
+		vdi_i = (vdi_file_t *) lptr->data;
+		if (g_strcmp0(vdi_i->filename, vdi->filename) == 0) {
+			if (vdi_i->filemtime == vdi->filemtime) {
+				// Dbg only:
+				g_printf ("up to date crclist found in vmref : ");
+				mtime = g_date_time_new_from_unix_local (vdi_i->filemtime);
+				g_printf ("%s\n", g_date_time_format (mtime, "%F %k:%M:%S (UTC%z)"));
+				// ---
+				break;
+			} else {
+				// Dbg only:
+		    	g_printf ("up to date crclist NOT found in vmref, latest is dated :");
+				mtime = g_date_time_new_from_unix_local (vdi_i->filemtime);
+		        g_printf ("%s\n", g_date_time_format (mtime, "%F %k:%M:%S (UTC%z)"));
+				// ---
+		        return NULL;
+			}
+		}
+	}
+
+	if (lptr) {
+		/* Copy CRC list */
+		vdi->filecrclist = g_slist_copy(vdi_i->filecrclist);
+		return vdi->filecrclist;
+	} else {
+		// Dbg only:
+    	g_printf ("Vdi file was not found in previous VM signature, \n");
+    	g_printf ("It should be a brand new snapshot.\n");
+//		mtime = g_date_time_new_from_unix_local (vdi->filemtime);
+//        g_printf ("%s\n", g_date_time_format (mtime, "%F %k:%M:%S (UTC%z)"));
+		// ---
+		return NULL;
+	}
+}
+
 
 /* ************************ */
 /* *** Main entry point *** */
@@ -130,10 +177,21 @@ int main(int argc, char * argv[])
     long tot_mtime, tot_secs, tot_usecs;
     long total_filesize = 0;
     vm_meta_snap_t * vm = NULL;
+    vm_meta_snap_t * vmref = NULL; // Previous cfg file as reference and deltas.
 
     GSList * file_list = NULL, * list_ptr = NULL;
 
-    //VBOX_IMG_DIR
+    /* FIXME: getopt() development */
+    if (argv[1]) {
+        g_printf ("ref file '%s' given: incremental parse\n",
+        		  argv[1]);
+    	vmref = cfg_file_open(argv[1]);
+    }
+    else {
+    	g_printf ("no ref file: full parse will be done.\n");
+    }
+
+    //VBOX_IMG_DIR / Unit Tests
     if (0){
         vm_meta_snap_t _vm = {
         		"test.cfg", NULL,
@@ -220,29 +278,40 @@ int main(int argc, char * argv[])
             printf ("Last modified: %s\n", g_date_time_format (mtime, "%F %k:%M:%S (UTC%z)"));
             g_date_time_unref (mtime); mtime = NULL;
 
-            // Compute CRC
-            gettimeofday(&start, NULL);
-            fdmapped = g_mapped_file_new (element->filename, FALSE /*RO access*/, NULL);
-#if 0
-            crc = g_compute_checksum_for_data (G_CHECKSUM_MD5,
-                                               g_mapped_file_get_contents (fdmapped),
-                                               g_mapped_file_get_length (fdmapped));
-#else
-            // md5 crc string example: "932f7dca53f2f79a1a0e445c58d6db8e"
-            element->filecrclist = file_scan_for_crc_list (element, CHUNK_SIZE);
-            //crc = g_strdup ("12341234123412341234123412341234");
-#endif
-            g_mapped_file_unref (fdmapped); fdmapped = NULL;
-            gettimeofday(&end, NULL);
-            secs  = end.tv_sec  - start.tv_sec;
-            usecs = end.tv_usec - start.tv_usec;
-            _mtime = ((secs) * 1000 + usecs/1000.0) + 0.5;
-  
-            //printf ("CRC = %s\n", crc);
-            //g_free (crc); crc = NULL;
+            // If incremental parse, check if CRC same as ref.
+            if (vmref) {
+            	// Check if ref contains same modification time to avoid crc list computation again.
+            	element->filecrclist = file_get_crclist_from_ref (element, vmref);
+            }
 
-            printf("CRC computation Elapsed time: %ld millisecs, or %ld secs\n", _mtime, _mtime/1000);
-            if (_mtime) printf("CRC computation bandwidth = %ld MBytes/secs\n", element->filesize / ((_mtime/1000) *1024*1024));
+            if (element->filecrclist == NULL) {
+				// Compute CRC
+            	g_printf ("File read for CRC in progress...");
+				gettimeofday(&start, NULL);
+				fdmapped = g_mapped_file_new (element->filename, FALSE /*RO access*/, NULL);
+#if 0
+				crc = g_compute_checksum_for_data (G_CHECKSUM_MD5,
+												   g_mapped_file_get_contents (fdmapped),
+												   g_mapped_file_get_length (fdmapped));
+#else
+				// md5 crc string example: "932f7dca53f2f79a1a0e445c58d6db8e"
+				element->filecrclist = file_scan_for_crc_list (element, CHUNK_SIZE);
+				//crc = g_strdup ("12341234123412341234123412341234");
+#endif
+				g_mapped_file_unref (fdmapped); fdmapped = NULL;
+				gettimeofday(&end, NULL);
+				secs  = end.tv_sec  - start.tv_sec;
+				usecs = end.tv_usec - start.tv_usec;
+				_mtime = ((secs) * 1000 + usecs/1000.0) + 0.5;
+            	g_printf ("done\n");
+
+				//printf ("CRC = %s\n", crc);
+				//g_free (crc); crc = NULL;
+
+				printf("CRC computation Elapsed time: %ld millisecs, or %ld secs\n", _mtime, _mtime/1000);
+				if (_mtime) printf("CRC computation bandwidth = %ld MBytes/secs\n", element->filesize / ((_mtime/1000) *1024*1024));
+            }
+
             total_filesize += element->filesize;
 
 //            g_free (element->filename); element->filename = NULL;
@@ -255,8 +324,9 @@ int main(int argc, char * argv[])
     tot_usecs = tot_end.tv_usec - tot_start.tv_usec;
     tot_mtime = ((tot_secs) * 1000 + tot_usecs/1000.0) + 0.5;
 
-    printf("Total elapsed time: %ld millisecs, or %ld secs, or %ld min\n", tot_mtime, tot_mtime/1000, tot_mtime/60000);
-    if (tot_mtime) printf("Average computation bandwidth = %ld MBytes/secs\n", total_filesize / ((tot_mtime/1000) *1024*1024));
+    g_printf ("----\n");
+    g_printf("Total elapsed time: %ld millisecs, or %ld secs, or %ld min\n", tot_mtime, tot_mtime/1000, tot_mtime/60000);
+    if (tot_mtime) g_printf("Average computation bandwidth = %ld MBytes/secs\n", total_filesize / ((tot_mtime/1000) *1024*1024));
 
     cfg_file_write("VBox.cfg", vm);
 
